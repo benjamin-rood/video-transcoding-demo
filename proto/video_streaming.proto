@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+option go_package = "github.com/benjamin-rood/video-transcoding-demo/proto";
+
+package video_streaming;
+
+import "google/protobuf/empty.proto";
+
+service StreamingVideoIngestor {
+  // Sends a video file stream to be processed.
+  rpc UploadVideo(stream VideoChunk) returns (google.protobuf.Empty) {}
+}
+
+message VideoChunk {
+  bytes data = 1;
+}
+
