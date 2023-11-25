@@ -13,5 +13,7 @@ service StreamingVideoIngestor {
 
 message VideoChunk {
   bytes data = 1;
+  bool segment_start = 2;
+  bool segment_end = 3;
 }
 

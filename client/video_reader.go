@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 
 	vspb "github.com/benjamin-rood/video-transcoding-demo/proto"
 	"google.golang.org/grpc"
@@ -18,12 +21,24 @@ const (
 	chunkSize = 256 * kb // Upload chunks of 256KB
 )
 
-func uploadVideo(client vspb.StreamingVideoIngestorClient, filepath string) error {
-	// TODO: Open the video file to read from
-	// Open the file to be uploaded.
-	file, err := os.Open(filepath)
+func streamVideoToServer(inputVideoDir string, client vspb.StreamingVideoIngestorClient) error {
+	files, err := os.ReadDir(inputVideoDir)
 	if err != nil {
-		log.Fatalf("failed to open file: %s", err)
+		log.Fatalf("Failed to read directory: %v", err)
+	}
+
+	for _, file := range files {
+		if err := streamVideoSegmentToServer(filepath.Join(inputVideoDir, file.Name()), client); err != nil {
+			return fmt.Errorf("Failed to stream file %s: %w", file.Name(), err)
+		}
+	}
+	return nil
+}
+
+func streamVideoSegmentToServer(inputVideoPath string, client vspb.StreamingVideoIngestorClient) error {
+	file, err := os.Open(inputVideoPath)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
 
@@ -33,25 +48,27 @@ func uploadVideo(client vspb.StreamingVideoIngestorClient, filepath string) erro
 		log.Fatalf("failed to open stream: %v", err)
 	}
 
+	buf := make([]byte, chunkSize)
+	isFirstChunk := true
 	for {
 		// Read the file in chunks and send them to the server.
-		buf := make([]byte, chunkSize)
 		n, err := file.Read(buf)
-		if err != nil {
-			log.Println(err)
-		}
 		if err != nil && err != io.EOF {
-			log.Fatalf("failed to read file: %s", err)
+			return fmt.Errorf("failed to read file: %w", err)
 		}
 		if n == 0 {
+			// no bytes read, done
 			break
 		}
 		chunk := buf[:n]
 		if err := stream.Send(&vspb.VideoChunk{
-			Data: chunk,
+			Data:         chunk,
+			SegmentStart: isFirstChunk,
+			SegmentEnd:   err == io.EOF,
 		}); err != nil {
 			log.Fatalf("failed to send chunk: %s", err)
 		}
+		isFirstChunk = false
 
 		// Simulate connection issues by randomly sleeping between bursts.
 		// sleepTime := rand.Intn(175) + 25 // Sleep for 25-200ms.
@@ -67,7 +84,14 @@ func uploadVideo(client vspb.StreamingVideoIngestorClient, filepath string) erro
 }
 
 func main() {
-	videoFilepath := ""
+	var videoDirPath string
+	flag.StringVar(&videoDirPath, "dir", "", "Path to the directory containing video segments")
+	flag.Parse()
+
+	// Ensure the directory path is provided
+	if videoDirPath == "" {
+		log.Fatal("Directory path is required")
+	}
 	// Set up a connection to the server (using insecure because this is not real)
 	conn, err := grpc.Dial(":59999", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -76,7 +100,7 @@ func main() {
 	defer conn.Close()
 
 	client := vspb.NewStreamingVideoIngestorClient(conn)
-	if err = uploadVideo(client, videoFilepath); err != nil {
+	if err = streamVideoToServer(videoDirPath, client); err != nil {
 		// Handle error based on gRPC status
 		// For example, you can use status.FromError(err) to get the status code and message
 	}
