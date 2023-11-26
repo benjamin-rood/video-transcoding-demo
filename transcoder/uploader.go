@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -19,20 +21,17 @@ type VideoInjestor struct {
 	vspb.UnsafeStreamingVideoIngestorServer
 	ctx            context.Context
 	transcodeQueue chan<- segment
-	errs           chan<- error
 }
 
-func NewVideoInjestor(ctx context.Context, transcodeQueue chan<- segment, errChan chan<- error) VideoInjestor {
-	return VideoInjestor{
+func NewVideoInjestor(ctx context.Context, transcodeQueue chan<- segment) *VideoInjestor {
+	return &VideoInjestor{
 		ctx:            ctx,
 		transcodeQueue: transcodeQueue,
-		errs:           errChan,
 	}
 }
 
 func (vi *VideoInjestor) UploadVideo(stream vspb.StreamingVideoIngestor_UploadVideoServer) error {
 	currentSegment := segment{}
-	totalBytesReceived := int64(0)
 	for {
 		select {
 		case <-vi.ctx.Done():
@@ -44,24 +43,16 @@ func (vi *VideoInjestor) UploadVideo(stream vspb.StreamingVideoIngestor_UploadVi
 				break
 			}
 			if err != nil {
-				// Is it better to just return an error instead of sending it to an error handler over a channel?
-				vi.errs <- status.Errorf(codes.Internal, "Error while receiving data: %v", err)
-				continue
+				return status.Errorf(codes.Internal, "Error while receiving data: %v", err)
 			}
 			if len(currentSegment) == 0 && !chunk.SegmentStart {
-				// Is it better to just return an error instead of sending it to an error handler over a channel?
-				vi.errs <- status.Errorf(codes.Internal, "expected new segment to begin with `segment_start` flag enabled")
-				continue
+				return status.Errorf(codes.Internal, "expected new segment to begin with `segment_start` flag enabled")
 			}
-			totalBytesReceived += int64(len(chunk.GetData()))
-			fmt.Printf("\rreceived %v bytes", totalBytesReceived)
 			currentSegment = append(currentSegment, chunk.Data...)
 			if chunk.SegmentEnd {
 				vi.transcodeQueue <- currentSegment
 				// clear segment buffer
 				currentSegment = segment{}
-				// reset bytes received counter
-				totalBytesReceived = 0
 			}
 		}
 	}
@@ -69,26 +60,31 @@ func (vi *VideoInjestor) UploadVideo(stream vspb.StreamingVideoIngestor_UploadVi
 
 func main() {
 	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
+	go handleSigint(cancel)
 	ln, err := net.Listen("tcp", ":59999")
 	if err != nil {
 		log.Fatalf("could not initialise tcp listener: %s", err)
 	}
 	defer ln.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	// make a buffered queue, we don't want to block receiving uploaded chunks
-	transcodeQueue := make(chan segment, 10)
 	errChan := make(chan error)
-	injestionService := NewVideoInjestor(ctx, transcodeQueue, errChan)
-	server := grpc.NewServer()
-	vspb.RegisterStreamingVideoIngestorServer(server, &injestionService)
-	outputQueue := transcodeVideoSegment(ctx, transcodeQueue, errChan)
+	// make a buffered queue, we don't want to block receiving uploaded chunks
+	inputQueue := make(chan segment, 10)
+	outputQueue := make(chan segment, 10)
+	wg.Add(1)
+	go transcodeVideoSegment(ctx, inputQueue, outputQueue, errChan)
 	wg.Add(1)
 	go func() {
-		for i := range <-outputQueue {
+		transcodedCounter := 1
+		for range outputQueue {
 			// TODO: we need to send the transcoded segments somewhere
-			log.Printf("successfully transcoded segment %v", i)
+			log.Printf("\rsuccessfully transcoded segment %07d", transcodedCounter)
+			transcodedCounter++
 		}
 	}()
+
+	server := grpc.NewServer()
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -97,14 +93,36 @@ func main() {
 			case err := <-errChan:
 				log.Println(err)
 				cancel()
-				return
 			case <-ctx.Done():
+				close(inputQueue)
+				close(outputQueue)
+				close(errChan)
+				server.Stop()
 				return
 			}
 		}
 	}()
+
+	vspb.RegisterStreamingVideoIngestorServer(server, NewVideoInjestor(ctx, inputQueue))
 	if err := server.Serve(ln); err != nil {
+		cancel()
 		log.Fatal(err)
 	}
 	wg.Wait()
+}
+
+func handleSigint(cancel context.CancelFunc) {
+	// setup signal handling to cancel everything if we receive a signal
+	sigChan := make(chan os.Signal, 1)
+	// os.Interrupt is a synonym for syscall.SIGINT and guaranteed on
+	// all OS's, SIGTERM is used by kubernetes and gives you 30 seconds
+	// to shutdown (timeout can be configured through the
+	// terminationGracePeriodSeconds, field in your pod specification.
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	// wait on a signal
+	<-sigChan
+	// log the signal
+	log.Println("received signal interruption")
+	// cancel all running
+	cancel()
 }

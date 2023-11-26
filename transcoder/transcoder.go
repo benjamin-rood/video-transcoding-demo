@@ -9,27 +9,24 @@ import (
 
 type segment []byte
 
-func transcodeVideoSegment(ctx context.Context, input <-chan segment, errChan chan<- error) (output chan segment) {
-	output = make(chan segment, 10)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				close(output)
-				return
-			case recv, ok := <-input:
-				if ok {
-					transcoded, err := transcodeToHLS(recv)
-					if err != nil {
-						errChan <- err
-						continue
-					}
-					output <- transcoded
+func transcodeVideoSegment(ctx context.Context, input <-chan segment, output chan<- segment, errChan chan<- error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case recv, ok := <-input:
+			if ok {
+				transcoded, err := transcodeToHLS(recv)
+				if err != nil {
+					errChan <- err
+					continue
 				}
+				output <- transcoded
+			} else {
+				return
 			}
 		}
-	}()
-	return output
+	}
 }
 
 func transcodeToHLS(videoSegment segment) (segment, error) {
