@@ -15,5 +15,7 @@ message VideoChunk {
   bytes data = 1;
   bool segment_start = 2;
   bool segment_end = 3;
+  string video_id = 4;
+  uint32 segment_number = 5;
 }
 
