@@ -6,25 +6,29 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	vspb "github.com/benjamin-rood/video-transcoding-demo/proto"
+	"github.com/spf13/afero"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
 	// play around with different chunk sizes
-	kb        = 1024
-	mb        = kb * kb
-	chunkSize = 256 * kb // Upload chunks of 256KB
+	kb = 1024
+	mb = kb * kb
+)
+
+var (
+	fs        afero.Fs = afero.NewOsFs()
+	chunkSize          = 256 * kb // Upload chunks of 256KB
 )
 
 func streamVideoToServer(videoID, inputVideoDir string, client vspb.StreamingVideoIngestorClient) error {
-	files, err := os.ReadDir(inputVideoDir)
+	files, err := afero.ReadDir(fs, inputVideoDir)
 	if err != nil {
 		log.Fatalf("Failed to read directory: %v", err)
 	}
@@ -59,7 +63,7 @@ func extractSegmentNumber(filename string) uint32 {
 }
 
 func streamVideoSegmentToServer(videoID, inputVideoPath string, client vspb.StreamingVideoIngestorClient) error {
-	file, err := os.Open(inputVideoPath)
+	file, err := fs.Open(inputVideoPath)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
@@ -85,13 +89,15 @@ func streamVideoSegmentToServer(videoID, inputVideoPath string, client vspb.Stre
 			break
 		}
 		chunk := buf[:n]
-		if err := stream.Send(&vspb.VideoChunk{
+		isLastChunk := n < chunkSize || err == io.EOF
+		msg := &vspb.VideoChunk{
 			Data:          chunk,
 			SegmentStart:  isFirstChunk,
-			SegmentEnd:    err == io.EOF,
+			SegmentEnd:    isLastChunk,
 			VideoId:       videoID,
 			SegmentNumber: segmentNumber,
-		}); err != nil {
+		}
+		if err := stream.Send(msg); err != nil {
 			log.Fatalf("failed to send chunk: %s", err)
 		}
 		isFirstChunk = false
