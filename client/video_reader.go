@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	vspb "github.com/benjamin-rood/video-transcoding-demo/proto"
+	"github.com/gogo/status"
 	"github.com/spf13/afero"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -23,9 +24,36 @@ const (
 )
 
 var (
-	fs        afero.Fs = afero.NewOsFs()
-	chunkSize          = 256 * kb // Upload chunks of 256KB
+	// wrap calls to the filesystem in afero to make testing easier
+	fs afero.Fs = afero.NewOsFs()
+	// chunkSize is the size of each chunk of the video file to be sent to the server
+	// define as a variable rather than a constant so that it can be changed for testing
+	chunkSize = 256 * kb // Upload chunks of 256KB
 )
+
+func main() {
+	var videoDirPath, videoID string
+	flag.StringVar(&videoDirPath, "dir", "", "Path to the directory containing video segments")
+	flag.StringVar(&videoID, "id", "", "Identifier label to use for the video to be sent to the server")
+	flag.Parse()
+
+	// Ensure the directory path is provided
+	if videoDirPath == "" {
+		log.Fatal("Directory path is required")
+	}
+	// Set up a connection to the server (using insecure because this is not real)
+	conn, err := grpc.Dial(":59999", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	client := vspb.NewStreamingVideoIngestorClient(conn)
+	if err = streamVideoToServer(videoID, videoDirPath, client); err != nil {
+		// TODO: Handle error based on gRPC status
+		log.Fatal(status.FromError(err))
+	}
+}
 
 func streamVideoToServer(videoID, inputVideoDir string, client vspb.StreamingVideoIngestorClient) error {
 	files, err := afero.ReadDir(fs, inputVideoDir)
@@ -113,29 +141,4 @@ func streamVideoSegmentToServer(videoID, inputVideoPath string, client vspb.Stre
 
 	log.Println("Upload finished successfully")
 	return nil
-}
-
-func main() {
-	var videoDirPath, videoID string
-	flag.StringVar(&videoDirPath, "dir", "", "Path to the directory containing video segments")
-	flag.StringVar(&videoID, "id", "", "Identifier label to use for the video to be sent to the server")
-	flag.Parse()
-
-	// Ensure the directory path is provided
-	if videoDirPath == "" {
-		log.Fatal("Directory path is required")
-	}
-	// Set up a connection to the server (using insecure because this is not real)
-	conn, err := grpc.Dial(":59999", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	client := vspb.NewStreamingVideoIngestorClient(conn)
-	if err = streamVideoToServer(videoID, videoDirPath, client); err != nil {
-		// TODO: Handle error based on gRPC status
-		// can use status.FromError(err) to get the status code and message
-	}
-
 }

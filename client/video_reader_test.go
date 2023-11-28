@@ -52,7 +52,7 @@ func TestStreamVideoSegmentToServer(t *testing.T) {
 	oldChunkSize := chunkSize
 	fs = afero.NewMemMapFs()
 	chunkSize = 5
-	// Make sure to restore the original values of appfs and chunkSize after the test
+	// Make sure to restore the original values of fs and chunkSize after the test
 	defer func() {
 		fs = oldFs
 		chunkSize = oldChunkSize

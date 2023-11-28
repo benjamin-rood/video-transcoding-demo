@@ -3,6 +3,7 @@ module github.com/benjamin-rood/video-transcoding-demo
 go 1.21.4
 
 require (
+	github.com/gogo/status v1.1.1
 	github.com/golang/protobuf v1.5.3
 	github.com/spf13/afero v1.10.0
 	github.com/stretchr/testify v1.7.0
@@ -15,6 +16,8 @@ require (
 require (
 	github.com/aws/aws-sdk-go v1.38.20 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/gogo/googleapis v0.0.0-20180223154316-0cd9801be74a // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/u2takey/go-utils v0.3.1 // indirect
