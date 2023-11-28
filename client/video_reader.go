@@ -33,8 +33,11 @@ var (
 
 func main() {
 	var videoDirPath, videoID string
-	flag.StringVar(&videoDirPath, "dir", "", "Path to the directory containing video segments")
-	flag.StringVar(&videoID, "id", "", "Identifier label to use for the video to be sent to the server")
+	// use these default values for testing
+	testDirPath := "/tmp/transcoding-examples/big-buck-bunny/360p/segmented"
+	testVideoID := "big.buck.bunny.demo.360p.30fps"
+	flag.StringVar(&videoDirPath, "dir", testDirPath, "Path to the directory containing video segments")
+	flag.StringVar(&videoID, "id", testVideoID, "Identifier label to use for the video to be sent to the server")
 	flag.Parse()
 
 	// Ensure the directory path is provided
@@ -129,6 +132,10 @@ func streamVideoSegmentToServer(videoID, inputVideoPath string, client vspb.Stre
 			log.Fatalf("failed to send chunk: %s", err)
 		}
 		isFirstChunk = false
+
+		if isLastChunk {
+			break
+		}
 
 		// TODO: Simulate connection issues by randomly sleeping between bursts.
 		// sleepTime := rand.Intn(175) + 25 // Sleep for 25-200ms.

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/golang/protobuf/ptypes/empty"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -31,6 +32,7 @@ func NewVideoInjestor(ctx context.Context, transcodeQueue chan<- segment) *Video
 }
 
 func (vi *VideoInjestor) UploadVideo(stream vspb.StreamingVideoIngestor_UploadVideoServer) error {
+	defer stream.SendAndClose(&empty.Empty{})
 	currentSegment := segment{}
 	for {
 		select {
@@ -40,7 +42,7 @@ func (vi *VideoInjestor) UploadVideo(stream vspb.StreamingVideoIngestor_UploadVi
 			chunk, err := stream.Recv()
 			if err == io.EOF {
 				// stream completed
-				break
+				return nil
 			}
 			if err != nil {
 				return status.Errorf(codes.Internal, "Error while receiving data: %v", err)
@@ -71,9 +73,7 @@ func main() {
 	// make a buffered queue, we don't want to block receiving uploaded chunks
 	inputQueue := make(chan segment, 10)
 	outputQueue := make(chan segment, 10)
-	wg.Add(1)
 	go transcodeVideoSegment(ctx, inputQueue, outputQueue, errChan)
-	wg.Add(1)
 	go func() {
 		transcodedCounter := 1
 		for range outputQueue {
